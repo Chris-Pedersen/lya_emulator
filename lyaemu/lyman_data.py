@@ -27,6 +27,7 @@ class SDSSData(object):
         #The covariance matrix, correlating each k and z bin with every other.
         #kbins vary first, so that we have 11 bins with z=2.2, then 11 with z=2.4,etc.
         self.covar = np.loadtxt(covarfile)
+        self.covar_diag = data[:, 3] ** 2
 
     def get_kf(self, kf_bin_nums=None):
         """Get the (unique) flux k values"""
@@ -52,9 +53,14 @@ class SDSSData(object):
         return np.linalg.inv(self.covar)
 
     def get_covar(self, zbin=None):
-        """Get the inverse covariance matrix"""
+        """Get the correlation matrix"""
         _ = zbin
         return self.covar
+
+    def get_covar_diag(self):
+        """Get the (diagonal of the) covariance matrix"""
+        return self.covar_diag
+
 
 class BOSSData(SDSSData):
     """A class to store the flux power and corresponding covariance matrix from BOSS."""
@@ -88,7 +94,8 @@ class BOSSData(SDSSData):
     def get_covar(self, zbin=None):
         """Get the covariance matrix"""
         if zbin is None:
-            return self.covar * self.covar_diag
+            std_diag = np.sqrt(self.covar_diag)
+            return self.covar * np.outer((std_diag, std_diag))
         ii = np.where((self.redshifts < zbin + 0.01)*(self.redshifts > zbin - 0.01)) #Elements in full matrix for given z
         rr = (np.min(ii), np.max(ii)+1)
         #return self.covar[rr[0]:rr[1],rr[0]:rr[1]] * self.covar_diag[rr[0]:rr[1]]
@@ -98,6 +105,57 @@ class BOSSData(SDSSData):
         npt.assert_allclose(np.diag(covar_matrix), self.covar_diag[rr[0]:rr[1]], atol=1.e-16)
         return covar_matrix
 
-    def get_covar_diag(self):
-        """Get the covariance matrix"""
-        return self.covar_diag
+
+class BoeraData(SDSSData):
+    """A class to store the flux power spectrum and covariance matrix from Boera+ 2018 (HIRES/UVES;
+    arxiv:1809.06980)."""
+    def __init__(self, datadir=None, covardir=None):
+        file_directory = os.path.dirname(__file__)
+        if datadir is None:
+            datadir = os.path.join(file_directory, 'data/Boera_HIRES_UVES_flux_power')
+        if covardir is None:
+            covardir = os.path.join(datadir, 'apjaafee4')
+
+        self.redshifts_unique = np.array([4.24, 4.58, 4.95])
+        self.nz = self.redshifts_unique.size
+        self.nk = 16
+        self.redshifts = np.repeat(self.redshifts_unique, self.nk)
+        self.kf = np.zeros_like(self.redshifts)
+        self.pk = np.zeros_like(self.redshifts)
+        self.covar_diag = np.zeros_like(self.redshifts)
+        self.covar = np.zeros((self.nk * self.nz, self.nk * self.nz))
+        self.covar_full = np.zeros((self.nz, self.nk * self.nz))
+        assert self.nz * self.nk == self.kf.size
+
+        for i in range(self.nz):
+            flux_power_file = os.path.join(datadir, 'flux_power_z_%.1f.dat'%self.redshifts_unique[i])
+            flux_power_data = np.genfromtxt(flux_power_file, skip_header=5, skip_footer=1)
+
+            start_index = i * self.nk
+            end_index = (i + 1) * self.nk
+            self.kf[start_index: end_index] = 10 ** flux_power_data[:, 0]
+            self.pk[start_index: end_index] = flux_power_data[:, 2]
+            self.covar_diag[start_index: end_index] = flux_power_data[:, 3] ** 2
+
+            covar_file = os.path.join(covardir, 'Cov_Matrixz=%.1f.dat'%self.redshifts_unique[i])
+            self.covar_full[i] = np.load(covar_file)
+            std_diag = np.sqrt(np.diag(self.covar_full[i]))
+            npt.assert_almost_equal(std_diag, np.sqrt(self.covar_diag[start_index: end_index]))
+            correlation_matrix = self.covar_full[i] / np.outer(std_diag, std_diag)
+            self.covar[start_index: end_index, start_index: end_index] = correlation_matrix
+
+    def get_covar(self, zbin=None):
+        """Get the covariance matrix (full -- i.e. not the correlation matrix)"""
+        if zbin is None:
+            std_diag = np.sqrt(self.covar_diag)
+            return self.covar * np.outer((std_diag, std_diag))
+        else:
+            redshift_bin_number = np.where((self.redshifts_unique < zbin + 0.1) * (self.redshifts_unique > zbin - 0.1))
+            return self.covar_full[redshift_bin_number]
+
+
+class HighResolutionData(BoeraData):
+    """A class to store the flux power spectra and covariance matrixes for a compendium of high- (and medium-)
+    resolution datasets."""
+    def __init__(self):
+        pass

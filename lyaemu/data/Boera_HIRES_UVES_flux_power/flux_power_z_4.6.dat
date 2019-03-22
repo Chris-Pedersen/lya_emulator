@@ -1,0 +1,23 @@
+Table 7 
+Power Spectrum Measurement for the Redshift Bin Centered at z = 4.6
+
+
+log(k/km^-1 s) 	P_k(km s^-1)	P_k(km s^-1)(R.C.)  	sigma	
+-2.2	128.8440	128.8804	15.5333	
+-2.1	111.7963	111.8463	13.5236	
+-2.0	91.4603	91.5253	10.6477	
+-1.9	94.5054	94.6114	11.2976	
+-1.8	74.2880	74.4201	7.6046	
+-1.7	64.1286	64.3093	6.5800	
+-1.6	53.5776	53.8172	5.3659	
+-1.5	40.5199	40.8068	3.6843	
+-1.4	28.5061	28.8268	3.0231	
+-1.3	21.0848	21.4623	1.6939	
+-1.2	12.1394	12.4857	0.8407	
+-1.1	6.0252	6.3006	0.4470	
+-1.0	3.1159	3.3457	0.2371	
+-0.9	1.4523	1.6273	0.1078	
+-0.8	0.5897	0.7071	0.0584	
+-0.7	0.2588	0.3465	0.0342	
+Note. Values in Column (3) have been corrected for instrumental resolution. The reported values have been obtained from the analysis of 114 sections of 20 h^-1 cMpc of Lyalpha forest with z epsilon [4.4, 4.8), extracted from a total of 15 quasar lines of sight. The mean redshift for this bin is $\bar{z}=4.58$.
+

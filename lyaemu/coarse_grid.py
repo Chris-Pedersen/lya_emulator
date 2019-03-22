@@ -28,7 +28,7 @@ def get_latex(key):
 class Emulator:
     """Small wrapper class to store parameter names and limits, generate simulations and get an emulator.
     """
-    def __init__(self, basedir, param_names=None, param_limits=None, kf=None, mf=None):
+    def __init__(self, basedir, param_names=None, param_limits=None, kf=None, mf=None, z=None, omegamh2=0.1199):
         if param_names is None:
             self.param_names = {'ns':0, 'As':1, 'heat_slope':2, 'heat_amp':3, 'hub':4}
         else:
@@ -37,19 +37,25 @@ class Emulator:
             self.param_limits = np.array([[0.8, 0.995], [1.2e-09, 2.6e-09], [-0.7, 0.1], [0.4, 1.4], [0.65, 0.75]])
         else:
             self.param_limits = param_limits
-        if kf is None:
-            self.kf = lyman_data.BOSSData().get_kf()
-        else:
-            self.kf = kf
         if mf is None:
             self.mf = ConstMeanFlux(None)
         else:
             self.mf = mf
+
+        if kf or z is None:
+            data_instance = lyman_data.BOSSData()
+            if kf is None:
+                kf = data_instance.get_kf()
+            if z is None:
+                z = data_instance.get_redshifts()
+        self.kf = kf
+
         #We fix omega_m h^2 = 0.1199 (Planck best-fit) and vary omega_m and h^2 to match it.
         #h^2 itself has little effect on the forest.
-        self.omegamh2 = 0.1199
+        self.omegamh2 = omegamh2
         #Corresponds to omega_m = (0.23, 0.31) which should be enough.
 
+        self.maxz = np.max(z)
         self.set_maxk()
 
         self.sample_params = []
@@ -62,12 +68,16 @@ class Emulator:
         #Corresponds to omega_m = (0.23, 0.31) which should be enough.
 
         #Maximal velfactor: the h dependence cancels but there is an omegam
-        minhub = self.param_limits[self.param_names['hub'],0]
-        velfac = lambda a: a * 100.0* np.sqrt(self.omegamh2/minhub**2/a**3 + (1 - self.omegamh2/minhub))
+        if self.param_names.get('omega_m', None) is None:
+            minhub = self.param_limits[self.param_names['hub'], 0]
+            omegam_max = self.omegamh2 / (minhub ** 2)
+        else:
+            omegam_max = self.param_limits[self.param_names['omega_m'], 1]
+        velfac = lambda a: a * 100. * np.sqrt((omegam_max / (a ** 3)) + (1 - omegam_max))
+
         #Maximum k value to use in comoving Mpc/h.
         #Comes out to k ~ 5, which is a bit larger than strictly necessary.
-        self.maxk = np.max(self.kf) * velfac(1/(1+4.4)) * 2
-
+        self.maxk = np.max(self.kf) * velfac(1/(1+self.maxz)) * 2
 
     def build_dirname(self,params, include_dense=False, strsz=3):
         """Make a directory name for a given set of parameter values"""
@@ -108,7 +118,10 @@ class Emulator:
         pn = self.param_names
         ev[pn['heat_slope']] = sics["rescale_slope"]
         ev[pn['heat_amp']] = sics["rescale_amp"]
-        ev[pn['hub']] = sics["hubble"]
+        if self.param_names.get('hub', None) is not None:
+            ev[pn['hub']] = sics["hubble"]
+        if self.param_names.get('omega_m', None) is not None:
+            ev[pn['omega_m']] = sics["omega_m"]
         ev[pn['ns']] = sics["ns"]
         wmap = sics["scalar_amp"]
         #Convert pivot of the scalar amplitude from amplitude
@@ -327,6 +340,7 @@ class Emulator:
         gp = gpemulator.MultiBinGP(params=aparams, kf=kf, powers = flux_vectors, param_limits = plimits, singleGP=emuobj)
         return gp
 
+
 class KnotEmulator(Emulator):
     """Specialise parameter class for an emulator using knots.
     Thermal parameters turned off."""
@@ -356,6 +370,44 @@ class KnotEmulator(Emulator):
             ss.make_simulation()
         except RuntimeError as e:
             print(str(e), " while building: ",outdir)
+
+
+class nCDMEmulator(Emulator):
+    """Specialise parameter class for an emulator for nCDM models. Defaults to Planck 2018 Omega_m h**2."""
+    def __init__(self, basedir, kf=None, mf=None, z=None, omegamh2=0.14345):
+        param_names = {'ns': 0, 'As': 1, 'heat_slope': 2, 'heat_amp': 3, 'omega_m': 4, 'alpha': 5, 'beta': 6, 'gamma': 7}
+        param_limits = np.array([[0.8, 0.995], [1.2e-09, 2.6e-09], [-0.7, 0.1], [0.4, 1.4], [0.23, 0.32], [0., 0.1], [1., 10.], [-10., 0.]])
+        if kf or z is None:
+            data_instance = lyman_data.BoeraData()
+            if kf is None:
+                kf = data_instance.get_kf()
+            if z is None:
+                z = data_instance.get_redshifts()
+        super().__init__(basedir=basedir, param_names=param_names, param_limits=param_limits, kf=kf, mf=mf, z=z, omegamh2=omegamh2)
+
+    def _do_ic_generation(self, ev, npart, box): #To be modified!!!
+        """Generate initial conditions"""
+        outdir = os.path.join(self.basedir, self.build_dirname(ev))
+        pn = self.param_names
+        rescale_slope = ev[pn['heat_slope']]
+        rescale_amp = ev[pn['heat_amp']]
+        hub = ev[pn['hub']]
+        # Convert pivot of the scalar amplitude from amplitude
+        # at 8 Mpc (k = 0.78) to pivot scale of 0.05
+        ns = ev[pn['ns']]
+        wmap = (0.05 / (2 * math.pi / 8.)) ** (ns - 1.) * ev[pn['As']]
+        ss = lyasimulation.LymanAlphaSim(outdir=outdir, box=box, npart=npart, ns=ns, scalar_amp=wmap,
+                                         rescale_gamma=True, rescale_slope=rescale_slope, redend=2.2,
+                                         rescale_amp=rescale_amp, hubble=hub, omega0=self.omegamh2 / hub ** 2,
+                                         omegab=0.0483, unitary=True)
+        try:
+            ss.make_simulation()
+            fpfile = os.path.join(os.path.dirname(__file__), "flux_power.py")
+            shutil.copy(fpfile, os.path.join(outdir, "flux_power.py"))
+            ss._cluster.generate_spectra_submit(outdir)
+        except RuntimeError as e:
+            print(str(e), " while building: ", outdir)
+
 
 def get_simulation_parameters_knots(base):
     """Get the parameters of a knot-based simulation from the SimulationICs JSON file."""
